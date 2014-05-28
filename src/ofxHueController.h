@@ -19,7 +19,14 @@
 #include "Poco/Net/HTTPResponse.h"
 
 #include "ofThread.h"
-#include "hueLightblub.h"
+#include "ofUtils.h"
+#include "ofEventUtils.h"
+
+typedef enum {
+    NONE_ALERT,
+    SELECT_ALERT,
+    LSELECT_ALERT
+}HUE_ALERT;
 
 typedef enum {
     LIGHT_CONTROLL_MODE,
@@ -33,6 +40,24 @@ typedef enum {
     HUE_GROUP_OFF,
     HUE_GROUP_ON
 }HUE_STATUS;
+
+typedef enum {
+    TIMEOUT_ERROR = 0,
+    UNAUTHORIZED_USER_ERROR = 1,
+    JSON_ERROR = 2,
+    RESOURCE_ERROR = 3,
+    METHOD_ERROR = 4,
+    MISSING_PARAMETERS_ERROR = 5,
+    PARAMETERS_ERROR = 6,
+    INVALID_VALUE_ERROR = 7,
+    PARAMETER_MODIFY_ERROR = 8,
+    INTERNAL_ERROR = 901,
+    LINK_BUTTON_ERROR = 101,
+    DEVICE_OFF_ERROR = 201,
+    GROUP_FULL_ERROR = 301,
+    DEVICE_GROUP_FULL_ERROR = 302
+    
+}HUE_ERROR;
 
 typedef struct {
     float hue;
@@ -55,43 +80,54 @@ using Poco::Net::HTTPClientSession;
 class ofxHueController: public ofThread {
     
 private:
-    vector<hueLightblub *>lightbulbs;
     string address, userName, apiMethod;
-    CONTROLL_MODE mode;
-    bool sendData;
-    bool result;
+    bool sendData, result;
     Poco::Condition condition;
+    vector<string>hue_ip;
+    CONTROLL_MODE mode;
     
 protected:
+    void start();
     void setMode(CONTROLL_MODE _mode);
-    bool sendCommand(string _action, string _command);
+    void notifyEvent(int _id);
+    
     string getLog(string _s);
+    int errorID(string error);
+    bool sendCommand(string _action, string _command);
+    
     queue<hueForm> forms;
+
 public:
     ofxHueController();
     
-    void setup(string url, string name);
-    void setBlub(int size);
-    void start();
+    bool setup(string name, int ip = 0);
     void stop();
     void addAction(const hueForm & f);
     void threadedFunction();
 
+    //portal
+    bool discoverBridges();
+    
     //user
     string getUserInfo();
-    string addNewUser(string url, string devicetypeName ,string name);
+    bool addNewUser(string url, string devicetypeName ,string name);
     
     //light
-    string selectLight(int n);
+    string getAllLights();
+    bool selectLight(int n, bool selected = true);
     bool lightOn(int n, const float &_hue, bool simpleSet = true, bool setAsInt16w = false, const float &_sat = 255, const float &_bri = 255, bool transition = false, const int &transitionMS = 1);
     bool lightOff(int n, bool transition = false, const int &transitionMS = 1);
     
     //group
+    string getAllGroupInfo();
     string getGroupInfo(int groupID);
-    string createGroup(string groupName, int groupID, const vector<int> &blubID);
-    string setGroup(int groupID, const vector<int> &blubID);
+    bool createGroup(string groupName, int groupID, const vector<int> &blubID);
+    bool setGroup(int groupID, const vector<int> &blubID);
     bool setGroupStatus(int groupID, const float &_hue, bool simpleSet = true, bool setAsInt16w = false, const float &_sat = 255, const float &_bri = 255, bool transition = false, const int &transitionMS = 1);
     bool turnOffAll(int groupID, bool transition = false, const int &transitionMS = 1);
     
+    vector<string>getIPaddress() const { return hue_ip; }
+    
+    ofEvent<HUE_ERROR> errorAlert;
     
 };

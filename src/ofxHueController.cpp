@@ -12,24 +12,18 @@
 {}
 
 //-----------------------------------------------------------------------------------
-/*public*/void ofxHueController::setup(string url, string name){
-    address = "http://"+ url + "/api/";
-    userName = name;
-}
-
-//-----------------------------------------------------------------------------------
-/*public*/void ofxHueController::setBlub(int size){
-    lightbulbs.clear();
+/*public*/bool ofxHueController::setup(string name, int ip){
     
-    for (int i = 0; i < size; i++) {
-        hueLightblub * h = new hueLightblub(ofToString(i+1));
-        lightbulbs.push_back(h);
+    address = "http://"+ hue_ip[ip] + "/api/";
+    userName = name;
+    string error = getUserInfo();
+    int error_id = errorID(error);
+    if (error == "error" || error_id > 0) {
+        notifyEvent(error_id);
+        return false;
     }
-}
-
-//-----------------------------------------------------------------------------------
-/*public*/void ofxHueController::start(){
-    startThread(true, false);
+    start();
+    return true;
 }
 
 //-----------------------------------------------------------------------------------
@@ -70,6 +64,7 @@
             if (!result) {
                 sendData = false;
                 forms.pop();
+                ofLog(OF_LOG_VERBOSE,"pop form");
             }
         }
         if(forms.empty()){
@@ -81,66 +76,148 @@
     unlock();
 }
 
+//portal
+//-----------------------------------------------------------------------------------
+/*public*/bool ofxHueController::discoverBridges(){
+    string s = getLog("curl -X GET www.meethue.com/api/nupnp");
+    
+    int error_id = errorID(s);
+    if (error_id > 0) {
+        notifyEvent(error_id);
+        return false;
+    }
+    char *resultChar = new char[s.length()+1];
+    strncpy(resultChar, s.c_str(), s.length());
+    string _buffer = "";
+    bool addToString = false;
+    
+    vector<string>address;
+    for (int i = 0; i < s.length(); i++) {
+        if (resultChar[i] == '{' && !addToString) { addToString = true; }
+        else if(resultChar[i] != '}' && addToString){ _buffer+=resultChar[i]; }
+        else if(resultChar[i] == '}' && addToString){
+            address.push_back(_buffer);
+            addToString = false;
+            _buffer = "";
+        }
+    }
+    hue_ip.clear();
+    for (int i = 0; i< address.size(); i++) {
+        size_t startIpPoint = address[i].find("internalipaddress");
+        if (startIpPoint != string::npos) {
+            string _first = address[i].substr(startIpPoint+20);
+            size_t _endIp = _first.find("\"");
+            string ip = _first.substr(0, _endIp);
+            hue_ip.push_back(ip);
+        }
+    }
+    
+    if (hue_ip.size() > 0) { return true; }
+    return false;
+}
+
+
 //user
 
 //-----------------------------------------------------------------------------------
 /*public*/string ofxHueController::getUserInfo(){
     if (address.empty()){
         ofLog(OF_LOG_ERROR,"no address!");
-        return;
+        return "error";
     }
     string s = "curl -X GET " + address + userName;
     return getLog(s);
 }
 
 //-----------------------------------------------------------------------------------
-/*public*/string ofxHueController::addNewUser(string url, string devicetypeName ,string name) {
+/*public*/bool ofxHueController::addNewUser(string url, string devicetypeName ,string name) {
     address = "http://"+ url + "/api/" ;
     userName = name;
     string body = "{\"username\":\"" + name + "\", \"devicetype\":\"" + devicetypeName + "\"}";
     
     string s = "curl -X POST " + address + " -d \'"+body+"\'";
-    return getLog(s);
+    string error = getLog(s);
+    int error_id = errorID(error);
+    if(error_id > 0){
+        notifyEvent(error_id);
+        return false;
+    }
+    return true;
 }
 
 //light
 
 //-----------------------------------------------------------------------------------
-/*public*/string ofxHueController::selectLight(int n){
-    if (n <= 0 || n >= lightbulbs.size()) {
-        ofLog(OF_LOG_ERROR, "no blob found!!");
-        return;
-    }
+/*public*/string ofxHueController::getAllLights(){
     setMode(LIGHT_CONTROLL_MODE);
-    string action = address+userName+"/"+apiMethod+"/"+ofToString(n+1)+"/state";
-    string body = lightbulbs[n]->setAlert(SELECT_ALERT);
-    string s = "curl -X PUT " + action + " -d \'"+body+"\'";
-    //return getLog(s);
-    system(s.c_str());
-    //sendCommand(action, body);
-    return "select light:" + ofToString(n+1);
+    string action = address + userName + "/" + apiMethod;
+    string s = "curl -X GET " + action;
+    return getLog(s);
 }
 
 //-----------------------------------------------------------------------------------
-/*public*/bool ofxHueController::lightOn(int n, const float &_hue, bool simpleSet, bool setAsInt16w, const float &_sat, const float &_bri, bool transiton, const int &transitionMS){
+/*public*/bool ofxHueController::selectLight(int n, bool selected){
+    setMode(LIGHT_CONTROLL_MODE);
+    string action = address+userName+"/"+apiMethod+"/"+ofToString(n)+"/state";
+    string alert;
+    if (selected) { alert = "\"lselect\""; }
+    else{ alert = "\"none\""; }
+    string body = "{ \"alert\" : " + alert+ " }";
+    string s = "curl -X PUT " + action + " -d \'"+body+"\'";
+    int error_id = errorID(getLog(s));
+    if (error_id > 0) {
+        notifyEvent(error_id);
+        return false;
+    }
+    return true;
+}
+
+//-----------------------------------------------------------------------------------
+/*public*/bool ofxHueController::lightOn(int n, const float &_hue, bool simpleSet, bool setAsInt16w, const float &_sat, const float &_bri, bool transition, const int &transitionMS){
     
     setMode(LIGHT_CONTROLL_MODE);
-    string action = address+userName+"/"+apiMethod+"/"+ofToString(n+1)+"/state";
-    string body = lightbulbs[n]->setColor(_hue, simpleSet, setAsInt16w, _sat, _bri, transiton, transitionMS);
+    string action = address+userName+"/"+apiMethod+"/"+ofToString(n)+"/state";
+    
+    int hue;
+    if (!setAsInt16w) { hue = (int)ofMap(_hue, 0, 255, 0, 65535); }
+    else { hue = (int)_hue; }
+    
+    stringstream json;
+    json << "{ \"on\" : true, " <<endl;
+    if (transition) { json << "\"transitiontime\":"<< ofToString(transitionMS) << ","<<endl; }
+    if(!simpleSet) {
+        json << "\"sat\" : " << ofToString((int)_sat) <<", "<<endl;
+        json << "\"bri\" : " << ofToString((int)_bri) <<", "<<endl;
+    }
+    json << "\"hue\" : " << ofToString(hue)<<endl;
+    json <<" }" ;
+    
+    string body = json.str();
     return sendCommand(action, body);
-   
+    
 }
 
 //-----------------------------------------------------------------------------------
 /*public*/bool ofxHueController::lightOff(int n, bool transiton, const int &transitionMS){
-
+    
     setMode(LIGHT_CONTROLL_MODE);
-    string action = address+userName+"/"+apiMethod+"/"+ofToString(n+1)+"/state";
-    string body = lightbulbs[n]->lightOff(transiton, transitionMS);
+    string action = address+userName+"/"+apiMethod+"/"+ofToString(n)+"/state";
+    
+    string body;
+    if (transiton) { body = "{\"on\": false, \"transitiontime\" : "+ofToString(transitionMS)+ " }"; }
+    else { body = "{ \"on\" : false }"; }
     return sendCommand(action, body);
 }
 
 //group
+
+//-----------------------------------------------------------------------------------
+/*public*/string ofxHueController::getAllGroupInfo(){
+    setMode(GROUP_CONTROLL_MODE);
+    string action = address + userName + "/" + apiMethod;
+    string s = "curl -X GET " + action;
+    return getLog(s);
+}
 
 //-----------------------------------------------------------------------------------
 /*public*/string ofxHueController::getGroupInfo(int groupID){
@@ -156,13 +233,9 @@
 }
 
 //-----------------------------------------------------------------------------------
-/*public*/string ofxHueController::createGroup(string groupName, int groupID, const vector<int> &blubID){
+/*public*/bool ofxHueController::createGroup(string groupName, int groupID, const vector<int> &blubID){
     if (groupID <= 0 || groupID >= 32) {
         ofLog(OF_LOG_ERROR, "incorrect group ID!!");
-        return;
-    }
-    if (blubID.size() <= 0 || blubID.size() > lightbulbs.size()){
-        ofLog(OF_LOG_ERROR, "not correct blub size");
         return;
     }
     setMode(GROUP_CONTROLL_MODE);
@@ -181,22 +254,22 @@
     
     //cout<<"body:"<<body.str()<<endl;
     string s = "curl -X POST " + action + " -d \'"+body.str()+"\'";
-    return getLog(s);
+    int error_id = errorID(getLog(s));
+    if (error_id > 0) {
+        notifyEvent(error_id);
+        return false;
+    }
+    return true;
 }
 
 //-----------------------------------------------------------------------------------
-/*public*/string ofxHueController::setGroup(int groupID, const vector<int> &blubID){
+/*public*/bool ofxHueController::setGroup(int groupID, const vector<int> &blubID){
     if (groupID <= 0 || groupID >= 32) {
         ofLog(OF_LOG_ERROR, "incorrect group ID!!");
         return;
     }
-    if (blubID.size() <= 0 || blubID.size() > lightbulbs.size()){
-        ofLog(OF_LOG_ERROR, "not correct blub size");
-        return;
-    }
     setMode(GROUP_CONTROLL_MODE);
     string action = address+userName+"/"+apiMethod+"/"+ofToString(groupID);
-    //cout<<"action:"<<action<<endl;
     
     stringstream body;
     body << "{";
@@ -207,9 +280,13 @@
     }
     body <<"]}";
     
-    //cout<<"body:"<<body.str()<<endl;
     string s = "curl -X PUT " + action + " -d \'"+body.str()+"\'";
-    return getLog(s);
+    int error_id = errorID(getLog(s));
+    if (error_id > 0) {
+        notifyEvent(error_id);
+        return false;
+    }
+    return true;
 }
 
 //-----------------------------------------------------------------------------------
@@ -220,19 +297,21 @@
     }
     setMode(GROUP_CONTROLL_MODE);
     string action = address+userName+"/"+apiMethod+"/"+ofToString(groupID)+"/action";
-
+    
     int h;
     if (!setAsInt16w) { h = (int)ofMap(_hue, 0, 255, 0, 65535); }
-    else { h = _hue; }
+    else { h = (int)_hue; }
     stringstream body;
     body << "{ \"on\" : true, ";
     if (transition) { body << "\"transitiontime\" : "<< ofToString(transitionMS) << ", "; }
     if (!simpleSet) {
-        body << "\"sat\" : " << ofToString(_sat) <<", ";
-        body << "\"bri\" : " << ofToString(_bri) <<", ";
+        body << "\"sat\" : " << ofToString((int)_sat) <<", ";
+        body << "\"bri\" : " << ofToString((int)_bri) <<", ";
     }
     body << "\"hue\" : " << ofToString(h);
     body <<" }" ;
+    
+    //cout<<"body:"<<body.str()<<endl;
     
     return sendCommand(action, body.str());
 }
@@ -252,8 +331,10 @@
     return sendCommand(action, body.str());
 }
 
-
-
+//-----------------------------------------------------------------------------------
+/*protected*/void ofxHueController::start(){
+    startThread(true, false);
+}
 
 //-----------------------------------------------------------------------------------
 /*protected*/void ofxHueController::setMode(CONTROLL_MODE _mode){
@@ -261,6 +342,48 @@
     if (mode == LIGHT_CONTROLL_MODE) { apiMethod = "lights"; }
     else if (mode == GROUP_CONTROLL_MODE) { apiMethod = "groups"; }
     else if (mode == SCHEDULE_CONTROLL_MODE) { apiMethod = "schedules"; }
+}
+
+//-----------------------------------------------------------------------------------
+/*protected*/void ofxHueController::notifyEvent(int _id){
+    HUE_ERROR hue_error = (HUE_ERROR)_id;
+    ofNotifyEvent(errorAlert, hue_error, this);
+}
+
+//-----------------------------------------------------------------------------------
+/*protected*/string ofxHueController::getLog(string _s){
+    FILE * res = NULL;
+    res = popen( _s.c_str() , "r");
+    int bufferSize = 1024;
+    string resp;
+    char  buff[bufferSize];
+    if (res == NULL) { ofLog(OF_LOG_ERROR, "error"); }
+    else{ while( fgets( buff, bufferSize, res) ){ resp+=buff; } }
+    return resp;
+}
+
+//-----------------------------------------------------------------------------------
+/*protected*/int ofxHueController::errorID(string error){
+    
+    int find_result = error.find("type");
+    if (find_result < 0) { return -1; }
+    string type = error.substr(find_result+4,10);
+    char * resultChar = new char[type.length()+1];
+    strncpy(resultChar, type.c_str(), type.length());
+    bool getErrorID = false;
+    string result = "";
+    int resultVal = 0;
+    for (int i = 0; i < type.length(); i++) {
+        if (resultChar[i] == ':' && !getErrorID) {
+            getErrorID = true;
+        }else if (resultChar[i] != ',' && getErrorID){
+            result += resultChar[i];
+        }else if (resultChar[i] == ',' && getErrorID){
+            resultVal = ofToInt(result);
+            getErrorID = false;
+        }
+    }
+    return resultVal;
 }
 
 //-----------------------------------------------------------------------------------
@@ -275,16 +398,26 @@
     try {
         
         if (!sendData) {
+            
+            ofLog(OF_LOG_VERBOSE, "send command");
             HTTPClientSession session(host, uri.getPort());
             HTTPRequest req(HTTPRequest::HTTP_PUT, path, HTTPMessage::HTTP_1_1);
+            
             session.setTimeout(Poco::Timespan(timeOut,0));
             req.setContentLength( _command.length() );
             
             std::ostream& os = session.sendRequest(req);
             std::istringstream is( _command );
+            
             Poco::StreamCopier::copyStream(is, os);
             req.setContentLength( _command.length() );
             
+            Poco::Net::HTTPResponse res;
+            istream& rs = session.receiveResponse(res);
+            string responseBody = "";
+            StreamCopier::copyToString(rs, responseBody);
+            int error_id = errorID(responseBody);
+            if (error_id > 0) { notifyEvent(error_id); }
             sendData = true;
             return sendData;
             
@@ -293,19 +426,8 @@
         return false;
     } catch (Exception& exc) {
         ofLog( OF_LOG_ERROR, "ofxHueController::sendCommand(%s) to %s >> Exception: %s\n", _command.c_str(), uri.toString().c_str(), exc.displayText().c_str() );
-        //turnOffAll(1,true,1);
+        HUE_ERROR hue_error = TIMEOUT_ERROR;
+        ofNotifyEvent(errorAlert, hue_error, this);
 		return false;
     }
-}
-
-//-----------------------------------------------------------------------------------
-/*protected*/string ofxHueController::getLog(string _s){
-    FILE * res = NULL;
-    res = popen( _s.c_str() , "r");
-    int bufferSize = 1024;
-    string resp;
-    char  buff[bufferSize];
-    if (res == NULL) { ofLog(OF_LOG_ERROR, "error"); }
-    else{ while( fgets( buff, bufferSize, res) ){ resp+=buff; } }
-    return resp;
 }
