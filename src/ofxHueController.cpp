@@ -8,7 +8,7 @@
 #include "ofxHueController.h"
 
 //-----------------------------------------------------------------------------------
-/*public*/ofxHueController::ofxHueController():sendData(false)
+/*public*/ofxHueController::ofxHueController():sendData(false),isOn(false),isOns(false)
 {}
 
 //-----------------------------------------------------------------------------------
@@ -79,8 +79,7 @@
 //portal
 //-----------------------------------------------------------------------------------
 /*public*/bool ofxHueController::discoverBridges(){
-    string s = getLog("curl -X GET www.meethue.com/api/nupnp");
-    
+    string s = getLog("curl -G https://www.meethue.com/api/nupnp");
     int error_id = errorID(s);
     if (error_id > 0) {
         notifyEvent(error_id);
@@ -151,7 +150,7 @@
 /*public*/string ofxHueController::getAllLights(){
     setMode(LIGHT_CONTROLL_MODE);
     string action = address + userName + "/" + apiMethod;
-    string s = "curl -X GET " + action;
+    string s = "curl -G " + action;
     return getLog(s);
 }
 
@@ -183,7 +182,10 @@
     else { hue = (int)_hue; }
     
     stringstream json;
-    json << "{ \"on\" : true, " <<endl;
+        json << "{ " ;
+    if (!isOn) {
+       json << "\"on\" : true, " <<endl;
+    }
     if (transition) { json << "\"transitiontime\":"<< ofToString(transitionMS) << ","<<endl; }
     if(!simpleSet) {
         json << "\"sat\" : " << ofToString((int)_sat) <<", "<<endl;
@@ -193,6 +195,7 @@
     json <<" }" ;
     
     string body = json.str();
+    isOn = true;
     return sendCommand(action, body);
     
 }
@@ -206,6 +209,7 @@
     string body;
     if (transiton) { body = "{\"on\": false, \"transitiontime\" : "+ofToString(transitionMS)+ " }"; }
     else { body = "{ \"on\" : false }"; }
+    isOn = false;
     return sendCommand(action, body);
 }
 
@@ -302,7 +306,10 @@
     if (!setAsInt16w) { h = (int)ofMap(_hue, 0, 255, 0, 65535); }
     else { h = (int)_hue; }
     stringstream body;
-    body << "{ \"on\" : true, ";
+    body << "{ ";
+    if (!isOns) {
+        body << "\"on\" : true, ";
+    }
     if (transition) { body << "\"transitiontime\" : "<< ofToString(transitionMS) << ", "; }
     if (!simpleSet) {
         body << "\"sat\" : " << ofToString((int)_sat) <<", ";
@@ -312,7 +319,7 @@
     body <<" }" ;
     
     //cout<<"body:"<<body.str()<<endl;
-    
+    isOns = true;
     return sendCommand(action, body.str());
 }
 
@@ -328,6 +335,7 @@
     body << "{ ";
     if (transition) { body << "\"transitiontime\" : "<< ofToString(transitionMS) << ", "; }
     body << "\"on\" : false }";
+    isOns = false;
     return sendCommand(action, body.str());
 }
 

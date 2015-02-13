@@ -81,7 +81,7 @@ class ofxHueController: public ofThread {
     
 private:
     string address, userName, apiMethod;
-    bool sendData, result;
+    bool sendData, result , isOn, isOns;
     Poco::Condition condition;
     vector<string>hue_ip;
     CONTROLL_MODE mode;
@@ -96,6 +96,7 @@ protected:
     bool sendCommand(string _action, string _command);
     
     queue<hueForm> forms;
+    
 
 public:
     ofxHueController();
